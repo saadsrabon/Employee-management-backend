@@ -250,7 +250,7 @@ app.get('/payments', authenticateJWT, requireRole('Employee'), async (req, res) 
 });
 
 // B. HR: Employee list
-app.get('/employee-list', authenticateJWT, requireRole('HR'), async (req, res) => {
+app.get('/employee-list', authenticateJWT, requireRole('HR','Admin'), async (req, res) => {
   try {
     const users = await db.collection('users').find({ role: 'Employee' }).toArray();
     res.json({ employees: users });
@@ -428,7 +428,7 @@ app.get('/contact', authenticateJWT, requireRole('Admin'), async (req, res) => {
 // --- Step 7: HR Employee Details Endpoint ---
 
 // HR: View employee details and salary/month chart data
-app.get('/employee-details/:id', authenticateJWT, requireRole('HR'), async (req, res) => {
+app.get('/employee-details/:id', authenticateJWT, requireRole('HR','Admin'), async (req, res) => {
   try {
     const { id } = req.params;
     const user = await db.collection('users').findOne({ _id: new ObjectId(id), role: 'Employee' });
@@ -440,6 +440,8 @@ app.get('/employee-details/:id', authenticateJWT, requireRole('HR'), async (req,
       photo: user.photo,
       designation: user.designation,
       payments, // [{month, year, amount, ...}]
+      salary: user.salary,
+      role: user.role,  
     });
   } catch (err) {
     res.status(500).json({ message: 'Failed to fetch employee details.', error: err.message });
