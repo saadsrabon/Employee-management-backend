@@ -12,19 +12,19 @@ const port = process.env.PORT || 5000;
 app.use(cors());
 app.use(express.json());
 
-// MongoDB connection
-const uri = process.env.MONGODB_URI || "mongodb+srv://workfolow:pRBt5ofSOLFWV9m1@cluster0.ngwkmsl.mongodb.net/employee_management?retryWrites=true&w=majority&appName=Cluster0";
-let db;
-MongoClient.connect(uri)
-  .then(client => {
-    //create specif
-    if(!db){
-      db = client.db('employee_management');
-    }else{
-    db = client.db();} // No need to specify name again, it's in the URI
-    console.log('MongoDB connected!');
-  })
-  .catch(err => console.log('MongoDB connection error:', err));
+// MongoDB connection helper for serverless
+const uri = process.env.MONGODB_URI || "mongodb+srv://workfolow:13243546@cluster0.ngwkmsl.mongodb.net/employee_management?retryWrites=true&w=majority&appName=Cluster0";
+let cachedClient = null;
+let cachedDb = null;
+
+async function getDb() {
+  if (cachedDb) return cachedDb;
+  if (!cachedClient) {
+    cachedClient = await MongoClient.connect(uri, { });
+  }
+  cachedDb = cachedClient.db(); // Uses db from URI
+  return cachedDb;
+}
 
 // --- Step 2: User Registration & Login (Native MongoDB) ---
 const bcrypt = require('bcryptjs');
@@ -51,6 +51,7 @@ function signToken(user) {
 // Registration endpoint
 app.post('/register', async (req, res) => {
   try {
+    const db = await getDb();
     const { email, password, name, role, bank_account_no, salary, designation, photo } = req.body;
     if (!email || !password || !name || !role) {
       return res.status(400).json({ message: 'Missing required fields.' });
@@ -97,6 +98,7 @@ app.post('/register', async (req, res) => {
 // Login endpoint
 app.post('/login', async (req, res) => {
   try {
+    const db = await getDb();
     const { email, password } = req.body;
     if (!email || !password) {
       return res.status(400).json({ message: 'Email and password required.' });
@@ -156,6 +158,7 @@ function requireRole(...roles) {
 // Add worksheet (Employee only)
 app.post('/work-sheets', authenticateJWT, requireRole('Employee'), async (req, res) => {
   try {
+    const db = await getDb();
     const { task, hoursWorked, date } = req.body;
     if (!task || !hoursWorked || !date) {
       return res.status(400).json({ message: 'Missing required fields.' });
@@ -178,6 +181,7 @@ app.post('/work-sheets', authenticateJWT, requireRole('Employee'), async (req, r
 // Get worksheets (Employee: own, HR: all, filterable)
 app.get('/work-sheets', authenticateJWT, requireRole('Employee', 'HR'), async (req, res) => {
   try {
+    const db = await getDb();
     const { month, year, userId } = req.query;
     let filter = {};
     if (req.user.role === 'Employee') {
@@ -201,6 +205,7 @@ app.get('/work-sheets', authenticateJWT, requireRole('Employee', 'HR'), async (r
 // Edit worksheet (Employee only, own worksheet)
 app.patch('/work-sheets/:id', authenticateJWT, requireRole('Employee'), async (req, res) => {
   try {
+    const db = await getDb();
     const { id } = req.params;
     const { task, hoursWorked, date } = req.body;
     const workSheet = await db.collection('work_sheets').findOne({ _id: new ObjectId(id) });
@@ -220,6 +225,7 @@ app.patch('/work-sheets/:id', authenticateJWT, requireRole('Employee'), async (r
 // Delete worksheet (Employee only, own worksheet)
 app.delete('/work-sheets/:id', authenticateJWT, requireRole('Employee'), async (req, res) => {
   try {
+    const db = await getDb();
     const { id } = req.params;
     const workSheet = await db.collection('work_sheets').findOne({ _id: new ObjectId(id) });
     if (!workSheet) return res.status(404).json({ message: 'Work sheet not found.' });
@@ -236,6 +242,7 @@ app.delete('/work-sheets/:id', authenticateJWT, requireRole('Employee'), async (
 // A. Employee: View own payment history (paginated)
 app.get('/payments', authenticateJWT, requireRole('Employee'), async (req, res) => {
   try {
+    const db = await getDb();
     const { page = 1, limit = 5 } = req.query;
     const skip = (parseInt(page) - 1) * parseInt(limit);
     const paymentsCol = db.collection('payments');
@@ -255,6 +262,7 @@ app.get('/payments', authenticateJWT, requireRole('Employee'), async (req, res) 
 // B. HR: Employee list
 app.get('/employee-list', authenticateJWT, requireRole('HR','Admin'), async (req, res) => {
   try {
+    const db = await getDb();
     const users = await db.collection('users').find({ role: 'Employee' }).toArray();
     res.json({ employees: users });
   } catch (err) {
@@ -265,6 +273,7 @@ app.get('/employee-list', authenticateJWT, requireRole('HR','Admin'), async (req
 // HR: Verify/unverify employee
 app.patch('/users/:id/verify', authenticateJWT, requireRole('HR', 'Admin'), async (req, res) => {
   try {
+    const db = await getDb();
     const { id } = req.params;
     const user = await db.collection('users').findOne({ _id: new ObjectId(id) });
     if (!user || user.role !== 'Employee') return res.status(404).json({ message: 'Employee not found.' });
@@ -279,6 +288,7 @@ app.patch('/users/:id/verify', authenticateJWT, requireRole('HR', 'Admin'), asyn
 // HR: Request payment for employee (only if verified, only once per month/year)
 app.post('/payroll', authenticateJWT, requireRole('HR'), async (req, res) => {
   try {
+    const db = await getDb();
     const { employeeId, month, year, amount } = req.body;
     if (!employeeId || !month || !year || !amount) {
       return res.status(400).json({ message: 'Missing required fields.' });
@@ -311,6 +321,7 @@ app.post('/payroll', authenticateJWT, requireRole('HR'), async (req, res) => {
 // C. Admin: View all payroll requests
 app.get('/payroll', authenticateJWT, requireRole('Admin'), async (req, res) => {
   try {
+    const db = await getDb();
     const payrolls = await db.collection('payroll').find({}).sort({ year: -1, month: -1 }).toArray();
     res.json({ payrolls });
   } catch (err) {
@@ -321,6 +332,7 @@ app.get('/payroll', authenticateJWT, requireRole('Admin'), async (req, res) => {
 // Admin: Approve/pay payroll (prevent double pay)
 app.patch('/payroll/:id/pay', authenticateJWT, requireRole('Admin'), async (req, res) => {
   try {
+    const db = await getDb();
     const { id } = req.params;
     const payroll = await db.collection('payroll').findOne({ _id: new ObjectId(id) });
     if (!payroll) return res.status(404).json({ message: 'Payroll request not found.' });
@@ -353,6 +365,7 @@ app.patch('/payroll/:id/pay', authenticateJWT, requireRole('Admin'), async (req,
 // Admin: Get all verified employees and HRs
 app.get('/all-employee-list', authenticateJWT, requireRole('Admin'), async (req, res) => {
   try {
+    const db = await getDb();
     const users = await db.collection('users').find({ isVerified: true, isFired: { $ne: true } }).toArray();
     res.json({ users });
   } catch (err) {
@@ -363,6 +376,7 @@ app.get('/all-employee-list', authenticateJWT, requireRole('Admin'), async (req,
 // Admin: Fire user (prevent login)
 app.patch('/users/:id/fire', authenticateJWT, requireRole('Admin'), async (req, res) => {
   try {
+    const db = await getDb();
     const { id } = req.params;
     const user = await db.collection('users').findOne({ _id: new ObjectId(id) });
     if (!user) return res.status(404).json({ message: 'User not found.' });
@@ -377,6 +391,7 @@ app.patch('/users/:id/fire', authenticateJWT, requireRole('Admin'), async (req, 
 // Admin: Promote employee to HR
 app.patch('/users/:id/make-hr', authenticateJWT, requireRole('Admin'), async (req, res) => {
   try {
+    const db = await getDb();
     const { id } = req.params;
     const user = await db.collection('users').findOne({ _id: new ObjectId(id) });
     if (!user) return res.status(404).json({ message: 'User not found.' });
@@ -391,6 +406,7 @@ app.patch('/users/:id/make-hr', authenticateJWT, requireRole('Admin'), async (re
 // Admin: Adjust salary (only allow increase)
 app.patch('/users/:id/salary', authenticateJWT, requireRole('Admin'), async (req, res) => {
   try {
+    const db = await getDb();
     const { id } = req.params;
     const { newSalary } = req.body;
     if (!newSalary || isNaN(newSalary)) return res.status(400).json({ message: 'Invalid salary.' });
@@ -409,6 +425,7 @@ app.patch('/users/:id/salary', authenticateJWT, requireRole('Admin'), async (req
 // Anyone: Send a contact message
 app.post('/contact', async (req, res) => {
   try {
+    const db = await getDb();
     const { email, message } = req.body;
     if (!email || !message) return res.status(400).json({ message: 'Email and message required.' });
     await db.collection('messages').insertOne({ email, message, createdAt: new Date() });
@@ -421,6 +438,7 @@ app.post('/contact', async (req, res) => {
 // Admin: View all contact messages
 app.get('/contact', authenticateJWT, requireRole('Admin'), async (req, res) => {
   try {
+    const db = await getDb();
     const messages = await db.collection('messages').find({}).sort({ createdAt: -1 }).toArray();
     res.json({ messages });
   } catch (err) {
@@ -433,6 +451,7 @@ app.get('/contact', authenticateJWT, requireRole('Admin'), async (req, res) => {
 // HR: View employee details and salary/month chart data
 app.get('/employee-details/:id', authenticateJWT, requireRole('HR','Admin'), async (req, res) => {
   try {
+    const db = await getDb();
     const { id } = req.params;
     const user = await db.collection('users').findOne({ _id: new ObjectId(id), role: 'Employee' });
     if (!user) return res.status(404).json({ message: 'Employee not found.' });
