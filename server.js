@@ -13,31 +13,19 @@ app.use(cors());
 app.use(express.json());
 
 // MongoDB connection
-let cachedDb = null;
+const uri = process.env.MONGODB_URI || "mongodb+srv://workfolow:pRBt5ofSOLFWV9m1@cluster0.ngwkmsl.mongodb.net/employee_management?retryWrites=true&w=majority&appName=Cluster0";
+let db;
+MongoClient.connect(uri)
+  .then(client => {
+    //create specif
+    if(!db){
+      db = client.db('employee_management');
+    }else{
+    db = client.db();} // No need to specify name again, it's in the URI
+    console.log('MongoDB connected!');
+  })
+  .catch(err => console.log('MongoDB connection error:', err));
 
-async function connectToDatabase() {
-  if (cachedDb) {
-    return cachedDb;
-  }
-
-  try {
-    const client = new MongoClient(process.env.MONGODB_URI, {
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
-    });
-
-    await client.connect();
-    console.log('Connected to MongoDB');
-    
-    const db = client.db('employee_management');
-    cachedDb = db;
-    return db;
-  } catch (error) {
-    console.error('MongoDB connection error:', error);
-    throw error;
-  }
-}
-connectToDatabase();
 // --- Step 2: User Registration & Login (Native MongoDB) ---
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
